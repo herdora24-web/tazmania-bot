@@ -220,7 +220,9 @@ function enviar() {
   .then(function(r) { return r.json(); })
   .then(function(d) {
     typing.remove();
-    procesarRespuesta(d.response);
+    if (d.response) addMsg('bot', d.response);
+    if (d.enviar_carta) { addImg(CARTA_1); addImg(CARTA_2); }
+    if (d.enviar_qr) { addImg(QR_BBVA); }
     btn.disabled = false;
     inp.focus();
   })
@@ -406,7 +408,16 @@ def chat_api():
     mensaje = data.get("message", "")
     session_id = data.get("session_id", "web_user")
     respuesta = procesar_con_claude(session_id, mensaje)
-    return jsonify({"response": respuesta})
+    enviar_carta = "##ENVIAR_CARTA##" in respuesta
+    enviar_qr = "##ENVIAR_QR##" in respuesta
+    texto_limpio = respuesta.replace("##ENVIAR_CARTA##", "").replace("##ENVIAR_QR##", "").strip()
+    if "##PEDIDO_CONFIRMADO##" in texto_limpio:
+        texto_limpio = texto_limpio[:texto_limpio.index("##PEDIDO_CONFIRMADO##")].strip()
+    return jsonify({
+        "response": texto_limpio,
+        "enviar_carta": enviar_carta,
+        "enviar_qr": enviar_qr
+    })
 
 
 @app.route("/reset", methods=["POST"])
