@@ -402,22 +402,22 @@ def chat_web():
     return render_template_string(HTML_CHAT)
 
 
+
 @app.route("/chat", methods=["POST"])
 def chat_api():
     data = request.get_json()
     mensaje = data.get("message", "")
     session_id = data.get("session_id", "web_user")
     respuesta = procesar_con_claude(session_id, mensaje)
-    enviar_carta = "##ENVIAR_CARTA##" in respuesta
-    enviar_qr = "##ENVIAR_QR##" in respuesta
+    msg_lower = mensaje.lower()
+    palabras_carta = ["menu", "carta", "que tienen", "que hay", "que venden", "productos", "ver todo"]
+    palabras_qr = ["transferencia", "qr", "bbva", "pagar con", "transferir"]
+    enviar_carta = "##ENVIAR_CARTA##" in respuesta or any(p in msg_lower for p in palabras_carta)
+    enviar_qr = "##ENVIAR_QR##" in respuesta or any(p in msg_lower for p in palabras_qr)
     texto_limpio = respuesta.replace("##ENVIAR_CARTA##", "").replace("##ENVIAR_QR##", "").strip()
     if "##PEDIDO_CONFIRMADO##" in texto_limpio:
         texto_limpio = texto_limpio[:texto_limpio.index("##PEDIDO_CONFIRMADO##")].strip()
-    return jsonify({
-        "response": texto_limpio,
-        "enviar_carta": enviar_carta,
-        "enviar_qr": enviar_qr
-    })
+    return jsonify({"response": texto_limpio, "enviar_carta": enviar_carta, "enviar_qr": enviar_qr})
 
 
 @app.route("/reset", methods=["POST"])
