@@ -3,17 +3,6 @@
 AGENTE MARIA - TAZMANIA
 Servidor Flask para WhatsApp + Claude API + Google Sheets
 ================================================================
-INSTALACIÓN:
-pip install flask anthropic twilio openai gspread google-auth requests
-
-VARIABLES DE ENTORNO necesarias (crear archivo .env):
-ANTHROPIC_API_KEY=tu_clave_aqui
-WHATSAPP_TOKEN=tu_token_meta_aqui
-VERIFY_TOKEN=un_texto_secreto_que_tu_eliges
-PHONE_NUMBER_ID=id_de_tu_numero_whatsapp_meta
-OPENAI_API_KEY=tu_clave_openai_para_whisper
-GOOGLE_SHEET_ID=id_de_tu_google_sheet
-================================================================
 """
 
 import os
@@ -28,13 +17,9 @@ from google.oauth2.service_account import Credentials
 
 app = Flask(__name__)
 
-# ── Clientes API ──────────────────────────────────────────────
 claude_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
-# ── Memoria de conversaciones (por número de teléfono) ────────
 conversaciones = {}
 
-# ── Prompt del sistema (Maria) ────────────────────────────────
 SYSTEM_PROMPT = """Eres Maria, la asistente virtual de Taz 🍔, el restaurante de comidas rápidas más sabroso de Buenaventura. Eres amable, rápida, cercana y hablas con el tono cálido y familiar del Pacífico colombiano. Tu único trabajo es tomar pedidos de domicilio de manera eficiente, verificar zonas de entrega y registrar cada pedido correctamente.
 
 ════════════════════════════════════════
@@ -126,7 +111,7 @@ Hotel Línea Buenaventura y Vía Alterna: solo hasta las 7:00 PM.
 FLUJO DEL PEDIDO
 ════════════════════════════════════════
 1. Saluda y pregunta qué quiere
-2. Confirma productos (¿combo o unitario?, ¿bebida?, ¿salsa si aplica?, ¿adicionales?)
+2. Confirma productos (combo o unitario, bebida, salsa si aplica, adicionales)
 3. Pide nombre y dirección
 4. Verifica zona de entrega
 5. Presenta resumen con total calculado correctamente
@@ -135,8 +120,8 @@ FLUJO DEL PEDIDO
 8. Si paga por transferencia: pide comprobante de pago antes de confirmar
 9. Confirma el pedido
 
-Cuando el pedido esté COMPLETAMENTE confirmado (tienes nombre, dirección, productos y pago), incluye al final de tu mensaje esta línea especial exactamente así:
-##PEDIDO_CONFIRMADO##{"nombre":"[nombre]","telefono":"[numero]","direccion":"[direccion]","barrio":"[barrio]","productos":"[lista de productos]","total":"[total]","pago":"[metodo]"}##
+Cuando el pedido esté COMPLETAMENTE confirmado incluye al final exactamente:
+##PEDIDO_CONFIRMADO##{"nombre":"[nombre]","telefono":"[numero]","direccion":"[direccion]","barrio":"[barrio]","productos":"[lista]","total":"[total]","pago":"[metodo]"}##
 
 ════════════════════════════════════════
 CAMBIOS Y CANCELACIONES
@@ -162,21 +147,32 @@ REGLAS
 # GOOGLE SHEETS
 # ══════════════════════════════════════════════════════════════
 
-def registrar_en_sheets(datos_pedido: dict):
-    """Registra el pedido confirmado en Google Sheets."""
+def get_google_client():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        print("⚠️ GOOGLE_CREDENTIALS_JSON no configurada")
+        return None
     try:
+        creds_dict = json.loads(creds_json)
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = Credentials.from_service_account_file(
-            "google_credentials.json", scopes=scopes
-        )
-        gc = gspread.authorize(creds)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        print(f"❌ Error Google client: {e}")
+        return None
+
+
+def registrar_en_sheets(datos_pedido: dict):
+    try:
+        gc = get_google_client()
+        if not gc:
+            return
         sheet = gc.open_by_key(os.environ.get("GOOGLE_SHEET_ID"))
         worksheet = sheet.sheet1
 
-        # Si es la primera fila, agrega encabezados
         if worksheet.row_count == 0 or worksheet.cell(1, 1).value != "Fecha":
             worksheet.append_row([
                 "Fecha", "Hora", "Nombre", "Teléfono",
@@ -197,88 +193,68 @@ def registrar_en_sheets(datos_pedido: dict):
             datos_pedido.get("pago", ""),
             "PENDIENTE"
         ])
-        print(f"✅ Pedido registrado en Google Sheets: {datos_pedido.get('nombre')}")
+        print(f"✅ Pedido registrado: {datos_pedido.get('nombre')}")
     except Exception as e:
-        print(f"❌ Error al registrar en Sheets: {e}")
+        print(f"❌ Error Sheets: {e}")
 
 
-def extraer_pedido_confirmado(texto: str) -> dict | None:
-    """Busca el marcador de pedido confirmado en la respuesta de Claude."""
+def extraer_pedido_confirmado(texto: str):
     if "##PEDIDO_CONFIRMADO##" in texto:
         try:
             inicio = texto.index("##PEDIDO_CONFIRMADO##") + len("##PEDIDO_CONFIRMADO##")
             fin = texto.index("##", inicio)
-            json_str = texto[inicio:fin]
-            return json.loads(json_str)
+            return json.loads(texto[inicio:fin])
         except Exception as e:
             print(f"Error extrayendo pedido: {e}")
     return None
 
 
 def limpiar_respuesta(texto: str) -> str:
-    """Elimina el marcador técnico de la respuesta antes de enviarla al cliente."""
     if "##PEDIDO_CONFIRMADO##" in texto:
-        inicio = texto.index("##PEDIDO_CONFIRMADO##")
-        texto = texto[:inicio].strip()
+        texto = texto[:texto.index("##PEDIDO_CONFIRMADO##")].strip()
     return texto
 
 
 # ══════════════════════════════════════════════════════════════
-# TRANSCRIPCIÓN DE NOTAS DE VOZ
+# NOTAS DE VOZ
 # ══════════════════════════════════════════════════════════════
 
-def transcribir_audio(audio_id: str) -> str | None:
-    """Descarga y transcribe una nota de voz de WhatsApp con Whisper."""
+def transcribir_audio(audio_id: str):
     try:
         token = os.environ.get("WHATSAPP_TOKEN")
         headers = {"Authorization": f"Bearer {token}"}
-
-        # Obtener URL del audio
         url_info = requests.get(
-            f"https://graph.facebook.com/v18.0/{audio_id}",
-            headers=headers
+            f"https://graph.facebook.com/v18.0/{audio_id}", headers=headers
         ).json()
         audio_url = url_info.get("url")
-
-        # Descargar el audio
         audio_resp = requests.get(audio_url, headers=headers)
 
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             f.write(audio_resp.content)
             temp_path = f.name
 
-        # Transcribir con Whisper
         from openai import OpenAI
         openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         with open(temp_path, "rb") as audio_file:
             transcript = openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                language="es"
+                model="whisper-1", file=audio_file, language="es"
             )
         os.unlink(temp_path)
         return transcript.text
-
     except Exception as e:
-        print(f"Error transcribiendo audio: {e}")
+        print(f"Error audio: {e}")
         return None
 
 
 # ══════════════════════════════════════════════════════════════
-# CLAUDE - PROCESAR MENSAJE
+# CLAUDE
 # ══════════════════════════════════════════════════════════════
 
 def procesar_con_claude(numero: str, mensaje_usuario: str) -> str:
-    """Envía el mensaje a Claude manteniendo el historial de conversación."""
     if numero not in conversaciones:
         conversaciones[numero] = []
 
-    conversaciones[numero].append({
-        "role": "user",
-        "content": mensaje_usuario
-    })
-
-    # Mantener máximo 20 turnos para controlar costos
+    conversaciones[numero].append({"role": "user", "content": mensaje_usuario})
     historial = conversaciones[numero][-20:]
 
     respuesta = claude_client.messages.create(
@@ -288,30 +264,20 @@ def procesar_con_claude(numero: str, mensaje_usuario: str) -> str:
         messages=historial
     )
 
-    texto_respuesta = respuesta.content[0].text
-
-    conversaciones[numero].append({
-        "role": "assistant",
-        "content": texto_respuesta
-    })
-
-    return texto_respuesta
+    texto = respuesta.content[0].text
+    conversaciones[numero].append({"role": "assistant", "content": texto})
+    return texto
 
 
 # ══════════════════════════════════════════════════════════════
-# WHATSAPP - ENVIAR MENSAJE
+# WHATSAPP
 # ══════════════════════════════════════════════════════════════
 
 def enviar_whatsapp(numero: str, mensaje: str):
-    """Envía un mensaje de texto por WhatsApp."""
     token = os.environ.get("WHATSAPP_TOKEN")
     phone_id = os.environ.get("PHONE_NUMBER_ID")
-
     url = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     data = {
         "messaging_product": "whatsapp",
         "to": numero,
@@ -319,37 +285,34 @@ def enviar_whatsapp(numero: str, mensaje: str):
         "text": {"body": mensaje}
     }
     resp = requests.post(url, headers=headers, json=data)
-    print(f"WhatsApp send → {resp.status_code}: {resp.text}")
+    print(f"WhatsApp → {resp.status_code}: {resp.text}")
 
 
 # ══════════════════════════════════════════════════════════════
-# WEBHOOK - VERIFICACIÓN (Meta requiere esto al configurar)
+# RUTAS
 # ══════════════════════════════════════════════════════════════
+
+@app.route("/", methods=["GET"])
+def salud():
+    return jsonify({"status": "Maria de Taz está activa 🍔"}), 200
+
 
 @app.route("/webhook", methods=["GET"])
 def verificar_webhook():
-    """Meta llama a esto una sola vez para verificar que el servidor es tuyo."""
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode == "subscribe" and token == os.environ.get("VERIFY_TOKEN"):
-        print("✅ Webhook verificado correctamente")
+        print("✅ Webhook verificado")
         return challenge, 200
-    else:
-        return "Token incorrecto", 403
+    return "Token incorrecto", 403
 
-
-# ══════════════════════════════════════════════════════════════
-# WEBHOOK - RECIBIR MENSAJES
-# ══════════════════════════════════════════════════════════════
 
 @app.route("/webhook", methods=["POST"])
 def recibir_mensaje():
-    """Recibe todos los mensajes entrantes de WhatsApp."""
     try:
         data = request.get_json()
-        print(f"Mensaje recibido: {json.dumps(data, indent=2)}")
+        print(f"📨 Recibido: {json.dumps(data, indent=2)}")
 
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
@@ -363,49 +326,34 @@ def recibir_mensaje():
         numero = msg.get("from")
         tipo = msg.get("type")
 
-        # ── Procesar según tipo de mensaje ────────────────────
         if tipo == "text":
             texto_cliente = msg["text"]["body"]
-
         elif tipo == "audio":
             audio_id = msg["audio"]["id"]
             texto_cliente = transcribir_audio(audio_id)
             if not texto_cliente:
-                enviar_whatsapp(numero, "No pude escuchar bien tu mensaje 😅 ¿Puedes escribirlo?")
+                enviar_whatsapp(numero, "No pude escuchar bien 😅 ¿Puedes escribirlo?")
                 return jsonify({"status": "ok"}), 200
-
         elif tipo == "image":
-            # El cliente envió una foto (ej. comprobante de pago)
-            texto_cliente = "[El cliente envió una imagen, probablemente el comprobante de pago]"
-
+            texto_cliente = "[El cliente envió una imagen, probablemente comprobante de pago]"
         else:
-            # Tipo no soportado
-            enviar_whatsapp(numero, "Por ahora solo puedo leer mensajes de texto, notas de voz e imágenes 😊")
+            enviar_whatsapp(numero, "Solo puedo leer mensajes de texto, notas de voz e imágenes 😊")
             return jsonify({"status": "ok"}), 200
 
-        # ── Enviar a Claude ───────────────────────────────────
         respuesta_claude = procesar_con_claude(numero, texto_cliente)
 
-        # ── Verificar si hay pedido confirmado ────────────────
         pedido = extraer_pedido_confirmado(respuesta_claude)
         if pedido:
             pedido["telefono"] = numero
             registrar_en_sheets(pedido)
 
-        # ── Limpiar y enviar respuesta al cliente ─────────────
-        respuesta_limpia = limpiar_respuesta(respuesta_claude)
-        enviar_whatsapp(numero, respuesta_limpia)
-
+        enviar_whatsapp(numero, limpiar_respuesta(respuesta_claude))
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        print(f"❌ Error en webhook: {e}")
+        print(f"❌ Error: {e}")
         return jsonify({"status": "error", "detail": str(e)}), 500
 
-
-# ══════════════════════════════════════════════════════════════
-# INICIO
-# ══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
