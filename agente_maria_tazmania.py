@@ -1,7 +1,7 @@
 """
 ================================================================
 AGENTE MARIA - TAZMANIA
-Servidor Flask para WhatsApp + Claude API + Google Sheets
+Servidor Flask para WhatsApp + OpenRouter (Claude) + Google Sheets
 ================================================================
 """
 
@@ -11,13 +11,10 @@ import requests
 import tempfile
 from datetime import datetime
 from flask import Flask, request, jsonify
-import anthropic
 import gspread
 from google.oauth2.service_account import Credentials
 
 app = Flask(__name__)
-
-claude_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 conversaciones = {}
 
 SYSTEM_PROMPT = """Eres Maria, la asistente virtual de Taz 🍔, el restaurante de comidas rápidas más sabroso de Buenaventura. Eres amable, rápida, cercana y hablas con el tono cálido y familiar del Pacífico colombiano. Tu único trabajo es tomar pedidos de domicilio de manera eficiente, verificar zonas de entrega y registrar cada pedido correctamente.
@@ -144,6 +141,45 @@ REGLAS
 
 
 # ══════════════════════════════════════════════════════════════
+# OPENROUTER - PROCESAR MENSAJE CON CLAUDE
+# ══════════════════════════════════════════════════════════════
+
+def procesar_con_claude(numero: str, mensaje_usuario: str) -> str:
+    if numero not in conversaciones:
+        conversaciones[numero] = []
+
+    conversaciones[numero].append({"role": "user", "content": mensaje_usuario})
+    historial = conversaciones[numero][-20:]
+
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY')}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://tazmania-bot.com",
+        "X-Title": "Maria Tazmania Bot"
+    }
+
+    data = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "max_tokens": 1000,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ] + historial
+    }
+
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=data
+    )
+
+    result = response.json()
+    texto = result["choices"][0]["message"]["content"]
+
+    conversaciones[numero].append({"role": "assistant", "content": texto})
+    return texto
+
+
+# ══════════════════════════════════════════════════════════════
 # GOOGLE SHEETS
 # ══════════════════════════════════════════════════════════════
 
@@ -244,29 +280,6 @@ def transcribir_audio(audio_id: str):
     except Exception as e:
         print(f"Error audio: {e}")
         return None
-
-
-# ══════════════════════════════════════════════════════════════
-# CLAUDE
-# ══════════════════════════════════════════════════════════════
-
-def procesar_con_claude(numero: str, mensaje_usuario: str) -> str:
-    if numero not in conversaciones:
-        conversaciones[numero] = []
-
-    conversaciones[numero].append({"role": "user", "content": mensaje_usuario})
-    historial = conversaciones[numero][-20:]
-
-    respuesta = claude_client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=SYSTEM_PROMPT,
-        messages=historial
-    )
-
-    texto = respuesta.content[0].text
-    conversaciones[numero].append({"role": "assistant", "content": texto})
-    return texto
 
 
 # ══════════════════════════════════════════════════════════════
