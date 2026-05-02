@@ -54,7 +54,7 @@ HTML_CHAT = """<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
 <title>Maria - Taz Bot Pruebas</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
