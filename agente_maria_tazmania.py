@@ -1,7 +1,7 @@
 """
 ================================================================
 AGENTE MARIA - TAZMANIA
-Servidor Flask con interfaz web de pruebas + WhatsApp + Google Sheets
+Servidor Flask con interfaz web + WhatsApp + Google Sheets + Imagenes
 ================================================================
 """
 
@@ -16,6 +16,11 @@ from google.oauth2.service_account import Credentials
 
 app = Flask(__name__)
 conversaciones = {}
+
+# URLs publicas de las imagenes en GitHub
+CARTA_1_URL = "https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/CARTA%201.jpeg"
+CARTA_2_URL = "https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/CARTA%202.jpeg"
+QR_BBVA_URL = "https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/QR_BBVA.jpeg"
 
 SYSTEM_PROMPT = """Eres Maria, la asistente virtual de Taz, el restaurante de comidas rapidas mas sabroso de Buenaventura. Eres amable, rapida, cercana y hablas con el tono calido y familiar del Pacifico colombiano. Tu unico trabajo es tomar pedidos de domicilio de manera eficiente, verificar zonas de entrega y registrar cada pedido correctamente.
 
@@ -82,22 +87,28 @@ BEBIDAS:
 - Cerveza: $5.000
 
 ZONAS DE DOMICILIO:
-ACCESO COMPLETO: Palo Seco Cra 22, Iglesia Cra 21, El Jorge Cra 20 hasta Licores Hebert, Inmaculada, Todo Jorge hasta Casa Blanca, La Abeja, Km 5 Hotel TC Mar, Calle 7 Cancha Sintetica, Miramar, San Luis, Juan 23 Calle La Gaitan, Berberena, Rusbell, Calle Colombia, Calle Las Flores, Chuchofong, Porvenir, El Jardin, El Campin, Eucaistico, 1 de Julio, Rockefeller, Modelo, Maria Eugenia, Bellavista hasta el Topacio, Olimpico hasta CDI, El Cristal, Transformacion hasta anillo vial, Cascajal hasta granero Don Bena, Independencia.
+ACCESO COMPLETO: Palo Seco Cra 22, Iglesia Cra 21, El Jorge Cra 20 hasta Licores Hebert, Inmaculada, Todo Jorge hasta Casa Blanca, La Abeja, Km 5 Hotel TC Mar, Calle 7 Cancha Sintetica, Miramar, San Luis, Juan 23 Calle La Gaitan, Berberena, Rusbell, Calle Colombia, Calle Las Flores, Chuchofong, Porvenir, El Jardin, El Campin, Eucaristico, 1 de Julio, Rockefeller, Modelo, Maria Eugenia, Bellavista hasta el Topacio, Olimpico hasta CDI, El Cristal, Transformacion hasta anillo vial, Cascajal hasta granero Don Bena, Independencia.
 
 ACCESO PARCIAL solo autopista: 12 de Abril, 6 de Enero, El Dorado Calle 4, Camilo Torres hasta drogueria Los Pinos, Ley 69, El Cambio, Alfonso Lopez, Nuevo Horizonte, El Caldas, El Uribe, La Virgen, Cabal Pombo, La Campina hasta el billar, La Libertad, La Frontera, La Dignidad Calle 4, Floresta hasta panaderia Trocitos Pan, Vista Hermosa, Villa Linda.
 
 RESTRICCION HORARIO: Hotel Linea Buenaventura y Via Alterna solo hasta las 7:00 PM.
 
+ENVIO DE CARTA E IMAGENES:
+- Si el cliente pide ver el menu, la carta o los productos, responde con el texto: ##ENVIAR_CARTA##
+- Si el cliente confirma que pagara por transferencia o QR, responde con: ##ENVIAR_QR##
+- Puedes incluir estos marcadores junto con texto normal. Ejemplo: "Aqui te envio nuestra carta! ##ENVIAR_CARTA## Dime que se te antoja!"
+
 FLUJO DEL PEDIDO:
 1. Saluda y pregunta que quiere
-2. Confirma productos (combo o unitario, bebida, salsa, adicionales)
-3. Pide nombre y direccion
-4. Verifica zona
-5. Presenta resumen con total correcto
-6. Tiempos: Entre semana 30-45 min, Fines de semana 50-60 min
-7. Metodo de pago: Efectivo, Datafono, o Transferencia QR BBVA Chef Fast llave 0091626861
-8. Si transfiere pide comprobante antes de confirmar
-9. Confirma pedido
+2. Si pide ver el menu envia la carta con ##ENVIAR_CARTA##
+3. Confirma productos (combo o unitario, bebida, salsa, adicionales)
+4. Pide nombre y direccion
+5. Verifica zona
+6. Presenta resumen con total correcto
+7. Tiempos: Entre semana 30-45 min, Fines de semana 50-60 min
+8. Metodo de pago: Efectivo, Datafono, o Transferencia QR BBVA Chef Fast llave 0091626861
+9. Si elige transferencia envia QR con ##ENVIAR_QR## y pide comprobante
+10. Confirma pedido
 
 Al confirmar pedido completamente incluye al final:
 ##PEDIDO_CONFIRMADO##{"nombre":"NOMBRE","telefono":"TELEFONO","direccion":"DIRECCION","barrio":"BARRIO","productos":"PRODUCTOS","total":"TOTAL","pago":"METODO"}##
@@ -127,6 +138,8 @@ body { font-family: Arial, sans-serif; background: #ECE5DD; height: 100vh; displ
 .bot { background: white; align-self: flex-start; border-top-left-radius: 0; }
 .user { background: #DCF8C6; align-self: flex-end; border-top-right-radius: 0; }
 .typing { background: white; align-self: flex-start; color: #999; font-style: italic; }
+.img-msg { background: white; align-self: flex-start; border-top-left-radius: 0; padding: 4px; border-radius: 8px; max-width: 75%; }
+.img-msg img { max-width: 100%; border-radius: 6px; display: block; }
 .iarea { background: #F0F0F0; padding: 10px 15px; display: flex; gap: 10px; align-items: center; }
 #inp { flex: 1; padding: 10px 15px; border-radius: 25px; border: none; outline: none; font-size: 14px; }
 #sbtn { background: #075E54; color: white; border: none; border-radius: 50%; width: 44px; height: 44px; cursor: pointer; font-size: 18px; }
@@ -150,6 +163,10 @@ body { font-family: Arial, sans-serif; background: #ECE5DD; height: 100vh; displ
 <script>
 var sid = 'prueba_' + Math.random().toString(36).substr(2, 9);
 
+var CARTA_1 = 'https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/CARTA%201.jpeg';
+var CARTA_2 = 'https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/CARTA%202.jpeg';
+var QR_BBVA = 'https://raw.githubusercontent.com/herdora24-web/tazmania-bot/main/QR_BBVA.jpeg';
+
 function addMsg(tipo, txt) {
   var m = document.getElementById('msgs');
   var d = document.createElement('div');
@@ -158,6 +175,32 @@ function addMsg(tipo, txt) {
   m.appendChild(d);
   m.scrollTop = m.scrollHeight;
   return d;
+}
+
+function addImg(url) {
+  var m = document.getElementById('msgs');
+  var d = document.createElement('div');
+  d.className = 'img-msg';
+  var img = document.createElement('img');
+  img.src = url;
+  img.alt = 'Imagen';
+  d.appendChild(img);
+  m.appendChild(d);
+  m.scrollTop = m.scrollHeight;
+}
+
+function procesarRespuesta(texto) {
+  var enviarCarta = texto.indexOf('##ENVIAR_CARTA##') !== -1;
+  var enviarQR = texto.indexOf('##ENVIAR_QR##') !== -1;
+  var textoLimpio = texto.replace(/##ENVIAR_CARTA##/g, '').replace(/##ENVIAR_QR##/g, '').trim();
+  if (textoLimpio) addMsg('bot', textoLimpio);
+  if (enviarCarta) {
+    addImg(CARTA_1);
+    addImg(CARTA_2);
+  }
+  if (enviarQR) {
+    addImg(QR_BBVA);
+  }
 }
 
 function enviar() {
@@ -177,7 +220,7 @@ function enviar() {
   .then(function(r) { return r.json(); })
   .then(function(d) {
     typing.remove();
-    addMsg('bot', d.response);
+    procesarRespuesta(d.response);
     btn.disabled = false;
     inp.focus();
   })
@@ -235,7 +278,7 @@ def procesar_con_claude(session_id, mensaje_usuario):
     if pedido:
         pedido["telefono"] = session_id
         registrar_en_sheets(pedido)
-    return texto_limpio
+    return texto
 
 
 def get_google_client():
@@ -291,14 +334,44 @@ def limpiar_respuesta(texto):
     return texto
 
 
-def enviar_whatsapp(numero, mensaje):
+def enviar_imagen_whatsapp(numero, url, caption=""):
+    token = os.environ.get("WHATSAPP_TOKEN")
+    phone_id = os.environ.get("PHONE_NUMBER_ID")
+    url_api = "https://graph.facebook.com/v18.0/" + phone_id + "/messages"
+    headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
+    data = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "type": "image",
+        "image": {"link": url, "caption": caption}
+    }
+    resp = requests.post(url_api, headers=headers, json=data)
+    print("Imagen WhatsApp: " + str(resp.status_code))
+
+
+def enviar_texto_whatsapp(numero, mensaje):
     token = os.environ.get("WHATSAPP_TOKEN")
     phone_id = os.environ.get("PHONE_NUMBER_ID")
     url = "https://graph.facebook.com/v18.0/" + phone_id + "/messages"
     headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": numero, "type": "text", "text": {"body": mensaje}}
     resp = requests.post(url, headers=headers, json=data)
-    print("WhatsApp: " + str(resp.status_code))
+    print("Texto WhatsApp: " + str(resp.status_code))
+
+
+def procesar_y_enviar_whatsapp(numero, texto_respuesta):
+    enviar_carta = "##ENVIAR_CARTA##" in texto_respuesta
+    enviar_qr = "##ENVIAR_QR##" in texto_respuesta
+    texto_limpio = limpiar_respuesta(
+        texto_respuesta.replace("##ENVIAR_CARTA##", "").replace("##ENVIAR_QR##", "").strip()
+    )
+    if texto_limpio:
+        enviar_texto_whatsapp(numero, texto_limpio)
+    if enviar_carta:
+        enviar_imagen_whatsapp(numero, CARTA_1_URL, "Carta Taz - Hamburguesas y Perros")
+        enviar_imagen_whatsapp(numero, CARTA_2_URL, "Carta Taz - Asados, Delicias y Bebidas")
+    if enviar_qr:
+        enviar_imagen_whatsapp(numero, QR_BBVA_URL, "QR de pago - BBVA Chef Fast")
 
 
 def transcribir_audio(audio_id):
@@ -373,15 +446,15 @@ def recibir_mensaje():
         elif tipo == "audio":
             texto_cliente = transcribir_audio(msg["audio"]["id"])
             if not texto_cliente:
-                enviar_whatsapp(numero, "No pude escuchar bien. Puedes escribirlo?")
+                enviar_texto_whatsapp(numero, "No pude escuchar bien. Puedes escribirlo?")
                 return jsonify({"status": "ok"}), 200
         elif tipo == "image":
             texto_cliente = "[El cliente envio una imagen, probablemente comprobante de pago]"
         else:
-            enviar_whatsapp(numero, "Solo puedo leer mensajes de texto, notas de voz e imagenes.")
+            enviar_texto_whatsapp(numero, "Solo puedo leer mensajes de texto, notas de voz e imagenes.")
             return jsonify({"status": "ok"}), 200
         respuesta = procesar_con_claude(numero, texto_cliente)
-        enviar_whatsapp(numero, respuesta)
+        procesar_y_enviar_whatsapp(numero, respuesta)
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         print("Error: " + str(e))
